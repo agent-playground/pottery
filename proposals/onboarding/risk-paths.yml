@@ -1,118 +1,144 @@
-# Risk hard rules — ONBOARDING PROPOSAL for agent-playground/pottery.
-# (docs/06-human-oversight-policy.md §3.2, §5.2; 搬檔後由人類放置到
-#  .github/factory/risk-paths.yml，本提案位置不是任何機制的讀取路徑。)
+# Risk hard rules — ONBOARDING PROPOSAL for agent-playground/pottery
+# Issue #31 (agent-onboard) · 變體 a · 掃描基準：software-factory @ 748bc61
 #
-# Touching any pattern below forces risk = 2 with no discretion.
-# H1-H4 derive from Gartner G00843405 (docs/00-source-summary.md §6);
-# H5-H7 are the factory's additions covering guardrail self-protection
-# and irreversible operations.
+# 搬檔後由人類放置到 .github/factory/risk-paths.yml（本提案位置不是任何
+# 機制的讀取路徑；注意該處「已存在」舊檔——見 proposals/onboarding/README.md）。
+# (docs/06-human-oversight-policy.md §3.2, §5.2)
 #
-# 撰寫依據：2026-11-01 對本 repo 的實際掃描（software-factory 分支,
-# setup.py 版本 3.0.1）。每條 glob 的註解標明命中的實際檔案——
-# **依實際目錄結構撰寫，不複製範本**（docs/16 §5.3：factory-scoreboard
-# 初版 H3 沿用 `**/*token*` 誤中 src/styles/tokens.css，每次改樣式都被
-# 強制人類審查；硬規則常誤報會訓練審查者略過警訊，反而削弱防護）。
+# 命中任一 pattern 即強制 risk = 2，無裁量空間。
+# H1–H4 出自 Gartner G00843405（docs/00-source-summary.md §6）；
+# H5–H7 為工廠自我保護與不可逆操作的加碼（docs/05 §1.1）。
 #
-# 本 repo 為 Python 函式庫：目錄僅 pottery/（20 模組 + py.typed）與
-# tests/（18 檔）。無 src/、無 auth/、無 payment/、無 migrations/、
-# 無 api/、無 openapi/proto、無 schema 檔（find 全數零命中）。
+# 撰寫紀律：**依實際目錄結構撰寫，絕不複製範本**（docs/16 §5.3 實證教訓：
+# factory-scoreboard 初版 H3 沿用 `**/*token*`，誤中 src/styles/tokens.css
+# ——設計 tokens 與憑證無關——每次改樣式都被強制人類審查；硬規則若經常
+# 誤報，會訓練審查者略過警訊，反而削弱防護）。
+# 每條 glob 後註明命中的實際檔案；本 run 已用 `git ls-files -- <glob>`
+# 逐一實跑核對（見各節證據）。
+#
+# 實際結構（find 全目錄掃描，非臆測）：
+#   pottery/（19 個 .py + py.typed，4790 行）、tests/（19 test_*.py +
+#   conftest.py + __init__.py）、docs/、.github/（workflows/ISSUE_TEMPLATE/
+#   factory/copilot-instructions.md）、根目錄散檔（setup.py、Makefile、
+#   requirements*.txt、pytest.ini、mypy.ini、.flake8、.bandit.yaml、
+#   .coveragerc、.isort.cfg、README.md、LICENSE、CODE_OF_CONDUCT.md）。
+#   **無** src/、auth/、payment/、migrations/、api/、openapi/proto、
+#   schema 檔、Dockerfile、k8s（find -iname 全數零命中）。
 
 hard_rules:
   # H1 — authentication and authorization logic
-  # 掃描未發現對應結構，待人類確認。
-  # 證據：對 pottery/ 全目錄 grep -iE 'password|secret|token|credential|auth'
-  # （排除 author 字串）零命中；連線端僅 tests/conftest.py:50 的
-  # redis://localhost:6379（無密碼參數）；Redis ACL/認證不在本套件職責內。
+  # 掃描未發現對應結構，保留規則 id、留空陣列，待人類確認。
+  # 證據（本 run 實 grep）：password|credential|oauth|jwt|token|auth 對
+  # pottery/、tests/、README.md 零命中；唯一連線端是 tests/conftest.py:47
+  # `redis://localhost:6379/{db}`（無密碼）。Redis ACL/認證不在本套件職責。
   H1: []
 
   # H2 — financial calculation
-  # 掃描未發現對應結構，待人類確認。
-  # 證據：無 payment/billing/invoice 任何檔案（pottery/ 20 模組全部為
-  # 資料結構、鎖、ID、序列號、executor/timer 設施；README.md 亦無金融語彙）。
+  # 掃描未發現對應結構，保留規則 id、留空陣列，待人類確認。
+  # 證據：payment|billing|invoice|refund 零命中；pottery/ 19 模組全部是
+  # 容器／鎖／ID／機率結構／快取／計時／executor 設施，無任何財務語彙。
   H2: []
 
   # H3 — sensitive data handling
-  # 掃描未發現對應結構，待人類確認。
-  # 證據：pottery/ 與 tests/ 無任何 cryptography/hashlib/pii 相關 import
-  # （grep 零命中）。requirements.txt 中的 cryptography==50.0.2 僅為 pip
-  # freeze 鎖定的傳遞依賴（不在直接依賴清單 requirements-to-freeze.txt），
-  # 非本 repo 程式碼路徑。邊界事實：pottery/bloom.py import `mmh3`
-  # （MurmurHash3，非密碼學雜湊，Bloom filter 機率結構用途）——無資安意涵，
-  # 特此標明以免審核者將「hash」字樣聯想到 H3。
-  # 取捨：刻意不沿用範本的 `**/*token*` 型樣式——本 repo 目前沒有凭证檔，
-  # 而泛 token glob 將來只會誤中無關命名（docs/16 §5.3 教訓）；若人類未來
-  # 引入憑證處理，應以精確檔名（如 .env、*.token）補入本節。
+  # 掃描未發現對應結構，保留規則 id、留空陣列，待人類確認。
+  # 證據：pottery/、tests/ 無 cryptography/hashlib/pii 相關 import
+  # （grep 零命中）。兩處易誤判點特此標明，供審核者核對：
+  #   - pottery/bloom.py:33 `import mmh3`（:69 mmh3.hash）——非密碼學的
+  #     MurmurHash3，Bloom filter 機率結構用途，無資安意涵。
+  #   - requirements.txt 的 cryptography==50.0.2、pyjwt>=2.10.1 僅為
+  #     requirements-to-freeze.txt 註明「We don't need … at the top-level
+  #     … pulled in from something else」的傳遞依賴鎖版（CVE 防堵），
+  #     不在 repo 程式路徑。
+  # 取捨：刻意不沿用範本的 `**/*token*`、`**/*secret*`——本 repo 目前
+  # 沒有任何 *token* 檔名（`git ls-files -- '**/*token*'` 實跑零命中），
+  # 泛樣式只會在日後誤中無關命名、重蹈 §5.3 覆轍。若人類日後引入憑證
+  # 處理，應以精確檔名（.env、*.token 等）補入本節。
   H3: []
 
   # H4 — systems of record and shared modules
   # 本 repo 無「記錄系統」（Redis 是外部儲存，套件本身無 DB）；但存在
-  # 明確的共享基礎模組與「失敗會靜默擴散給所有用客」的核心原語，逐一
-  # 列名如下（每條都有實際檔案命中）：
+  # 明確的共享基礎層與「失敗會靜默擴散給所有用客」的併發原語。逐條列名
+  # （git ls-files 實跑：每條恰命中 1 個實際檔案）：
   H4:
-    # 共享基礎層：被 11 個模組 import（dict/list/set/counter/deque/bloom/
-    # hyper/cache/nextid/redlock/aioredlock——grep 'from .base' 實測清單）
+    # 實際命中 pottery/base.py——共享序列化/編碼層（_Encodable），被 10 個
+    # 模組直接 import（grep 'from .base import' 實測：dict/list/set/cache/
+    # hyper/bloom/nextid/aionextid/redlock/aioredlock）；counter/deque 經
+    # RedisDict/RedisList 間接依賴（counter.py:47、deque.py:33）
     - "pottery/base.py"
-    # monkey.py:33-58 monkey patch json.dumps（PotteryEncoder），是每個
-    # 容器讀寫路徑的序列化層；由 pottery/__init__.py:29 載入
+    # 實際命中 pottery/monkey.py——:33 PotteryEncoder、:55 對 json.dumps
+    # 做全域 monkey patch；每個容器讀寫路徑都經過此序列化層，由
+    # pottery/__init__.py:29 載入即生效
     - "pottery/monkey.py"
-    # 分布式鎖（同步）：redlock.py:77-102 註冊 acquire/extend/release 三支
-    # Redis Lua 腳本；redlock.py:480-495 跨多 master 的 quorum/majority 表決
+    # 實際命中 pottery/redlock.py——分布式鎖（同步）：:107-142 註冊三支
+    # acquire/extend/release Lua 腳本、:343/:494/:544/:591 跨多 master 的
+    # quorum/majority 表決
     - "pottery/redlock.py"
-    # 分布式鎖（非同步）：aioredlock.py:213 呼叫 _acquired_script Lua、
-    # 407-424 與 540 另行實作 quorum 表決與 QuorumNotAchieved
+    # 實際命中 pottery/aioredlock.py——分布式鎖（非同步）雙實作：:213
+    # await _acquired_script、:262/:422-423/:468 同型 quorum 表決
     - "pottery/aioredlock.py"
-    # 單調遞增 ID（同步）：nextid.py:77-88 以 Lua CAS 腳本保證無重複 ID
+    # 實際命中 pottery/nextid.py——單調遞增 ID（同步）：:82-88 Lua CAS
+    # 腳本 _set_id_script 保證無重複 ID
     - "pottery/nextid.py"
-    # 單調遞增 ID（非同步）：aionextid.py:76 呼叫 _set_id_script，雙實作
+    # 實際命中 pottery/aionextid.py——單調 ID（非同步）雙實作：:76 呼叫
+    # _set_id_script、:101/:122 同型表決
     - "pottery/aionextid.py"
-    # quorum 的 scatter/gather 計時語意：executor.py:31 BailOutExecutor
-    # （紅鎖「凑夠多數即提前返回」的核心），被 nextid.py、redlock.py import
+    # 實際命中 pottery/executor.py——:26 BailOutExecutor（紅鎖「凑夠多數
+    # 即提前返回」的 scatter/gather 計時語意核心），被 nextid.py:52、
+    # redlock.py:72 import
     - "pottery/executor.py"
-  # 取捨說明（為什麼不用 `pottery/**` 或 `**/*lock*`）：
-  #   - `pottery/**`：函式庫對外整體都是「共享模組」，全覆蓋等於每個实质
-  #     變更 PR 都命中 H4——硬規則退化为常態人類審查，警告失去訊號價值
-  #     （§5.3 原則）；資料結構類模組（dict.py/list.py/set.py/bloom.py/
-  #     cache.py/timer.py…）的改動保護交由三軸基準分承擔。
-  #   - `**/*lock*`：模糊 glob 會連測試檔一起命中且將來易誤中無關命名，
-  #     不如列名精確。列名的代價是**模組更名/拆檔時本檔需同步更新**——
-  #     這正是 H5 保護本檔與 catalog-info.yaml 的理由，更名 PR 必經人類。
+  # 取捨（為什麼不用 `pottery/**` 或 `**/*lock*`）：
+  #   - `pottery/**`：git ls-files 實跑命中全部 19 個模組——函式庫整體都
+  #     算「共享模組」，全覆蓋等於每個實質變更 PR 都命中 H4，硬規則退化
+  #     為常態人類審查、警訊失去訊號價值（§5.3 原則）。資料結構模組
+  #     （dict/list/set/counter/deque/bloom/hyper/cache/timer）的改動
+  #     保護交由三軸基準分承擔。
+  #   - `**/*lock*`：git ls-files 實跑命中 4 檔——除 2 個模組外還連
+  #     tests/test_redlock.py、tests/test_aioredlock.py 兩個測試檔一起
+  #     命中（改測試不該強制人類審查），且通配在將來易誤中無關命名；
+  #     列名精確優於通配。
+  #   - annotations.py / exceptions.py 未入 H4：前者為 typing 相容層、
+  #     後者是公開例外名（其破壞面已由 H7 __init__.py 把關）。
+  #   - 列名的代價：模組更名/拆檔時本檔需同步更新——這正是 H5 保護本檔
+  #     的理由，更名 PR 必經人類。
 
-  # H5 — the guardrails themselves. Editing these would let the agent
-  # weaken its own constraints, collapsing the dual-layer defence (D4).
-  # 無條件寫入（與 repo 結構無關，docs/05 §1.1 核心不變量）。
+  # H5 — the guardrails themselves. 编辑这些等于让 agent 弱化自身約束，
+  # 瓦解雙層防護（D4）。無條件寫入，與 repo 結構無關（docs/05 §1.1）。
   H5:
-    # 實際命中既有檔：.github/workflows/python-package.yml（CI 定義）、
-    # .github/copilot-instructions.md、.github/ISSUE_TEMPLATE/*（此目錄改動
-    # 頻率低，寬覆蓋的誤報成本可接受）
+    # 實際命中 5 檔（git ls-files '.github/**' 實跑）：workflows/
+    # python-package.yml（CI 定義）、factory/risk-paths.yml（搬檔後本檔
+    # 的落點）、copilot-instructions.md、ISSUE_TEMPLATE/*2 檔。目錄級
+    # 寬覆蓋可接受：此處改動頻率低、且全部與治理相關。
     - ".github/**"
-    # 目前尚不存在於本 repo——建立即生效的保護；搬檔後請人類考慮一併補
-    # CODEOWNERS（docs/12）。
+    # 目前 repo 尚無 CODEOWNERS（find 零命中）——此為「建立即生效」的
+    # 前瞻保護；建議人類搬檔時一併依 docs/12 補 CODEOWNERS。
     - "CODEOWNERS"
-    # 本納管流程搬檔後將存在於 repo 根——三軸由人類登錄，agent 不得改。
+    # 搬檔後將存在於 repo 根（三軸由人類登錄，agent 不得改）。注意本
+    # repo 根目錄現已有一份舊 catalog-info.yaml——該檔生效中，受此條保護。
     - "catalog-info.yaml"
-    # 本 repo 目前無 .dsh/；若日後引入技能目錄，自我保護範圍自動涵蓋。
+    # 本 repo 目前無 .dsh/（ls 零命中）——若日後引入技能目錄，自我保護
+    # 自動涵蓋。
     - ".dsh/skills/**"
 
   # H6 — irreversible schema migrations
-  # 掃描未發現對應結構，待人類確認。
-  # 證據：無 migrations/、無 alembic/；find -iname '*schema*' 零命中——
+  # 掃描未發現對應結構，保留規則 id、留空陣列，待人類確認。
+  # 證據：無 migrations/、無 alembic、find -iname '*schema*' 零命中——
   # Redis 為 schema-less 外部儲存，本 repo 無不可逆結構變更面。
-  # 註：docs/16 §5.2 的双向探測若需 H6 命中範例，本 repo 請改以 H4 路徑
-  # （如 pottery/redlock.py）作為「命中硬規則」方向的探測目標。
+  # 註：docs/16 §5.2 雙向探測若需「命中硬規則」方向範例，本 repo 無 H6
+  # 可觸發，請改以 H4 列名檔（如 pottery/redlock.py）作為探測目標。
   H6: []
 
   # H7 — breaking changes to public APIs
-  # 掃描無範本結構（find：無 api/、無 *.proto、無 openapi.yaml）。Python
-  # 函式庫的「公開 API」是其匯入面——precise 代理即匯出宣告檔：
+  # 無 openapi/proto/api/ 等範本結構（find 零命中）。Python 函式庫的
+  # 「公開 API」是其匯入面，精確代理即匯出宣告檔：
   H7:
-    # 實際命中：pottery/__init__.py:22-55 宣告公開匯出面（RedisDict/
-    # RedisList/RedisSet/RedisCounter/RedisDeque、exceptions 全家、
-    # CachedOrderedDict/redis_cache、NextID/AIONextID、Redlock/AIORedlock/
-    # synchronize、ContextTimer、BloomFilter、HyperLogLog、PotteryEncoder）
-    # ——此檔增刪名稱即對所有用客的破壞性變更。內部重構不動此檔則不觸發。
+    # 實際命中 pottery/__init__.py——:21-55 import 匯出 RedisDict/List/
+    # Set/Counter/Deque、PotteryEncoder、exceptions 全家、CachedOrderedDict/
+    # redis_cache、NextID/AIONextID、Redlock/AIORedlock/synchronize、
+    # ContextTimer、BloomFilter、HyperLogLog；:58 起 __all__ 宣告。此檔
+    # 增刪名稱＝對所有用客的破壞性變更；內部重構不動此檔則不觸發。
     - "pottery/__init__.py"
   # 取捨：不把 README.md 納入 H7——README 確為可執行契約
-  # （tests/test_doctests.py:63-67 對 README.md 跑 doctest），但納入後
-  # 錯字修正也會被強制人類審查；README 的 doctest 由 pytest 綠燈把關，
-  # 已足以在一般變更中保護契約一致性。若人類認為需更嚴格，可自行加入
-  # "README.md"。不把 pottery/** 納入 H7（與 H4 語意重複且必然淹沒警訊）。
+  # （tests/test_doctests.py:63-66 對其跑 doctest），但納入後連錯字修正
+  # 都會被強制人類審查（§5.3 誤報成本）；doctest 已由 pytest 綠燈把關，
+  # 一般變更下足以維護契約一致性。人類如認為需更嚴，可自行加入
+  # "README.md"。不把 pottery/** 納入 H7：與 H4 語意重複且必然淹沒警訊。
