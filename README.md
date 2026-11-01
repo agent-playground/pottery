@@ -19,7 +19,25 @@ been battle tested in production at scale.
 
 
 
+## <a name="documentation"></a>專案文件（Documentation）
+
+本 repo 的架構總覽與 S5 盤點報告以繁體中文維護：
+
+- [架構總覽](docs/architecture/overview.md)：系統脈絡、容器與模組、Redis／client 狀態邊界、建置與測試。
+- [S5 盤點報告](docs/research/9-s5-a1-a4-inventory.md)：架構、測試、相依與風險盤點；候選發現待人類裁定。
+
+`pottery/` 是單一 Python 套件；公開 API 由 `pottery/__init__.py` 的 `__all__` 定義（目前 28 個名稱）。完整的模組職責、執行時資料流與建置方式請見架構總覽。
+
+架構摘要：
+
+- 五個 context：容器、機率結構、快取、分散式協調、共用核心。
+- 容器以單一 Redis key、JSON 值與 `WATCH`／`MULTI`／`EXEC` 運作；分散式 primitive 以多 master quorum 與 Lua 腳本運作。
+- 同步與非同步 API 是鏡像；部分參數只存在 client 端，同一 key 的參數一致性由呼叫者負責。
+
+
+
 ## Table of Contents
+- [專案文件](#documentation)
 - [Dicts 📖](#dicts)
 - [Sets 🛍️](#sets)
 - [Lists ⛓](#lists)
@@ -1027,29 +1045,36 @@ True
     1. `$ git clone git@github.com:brainix/pottery.git`
     2. `$ cd pottery/`
 2. Install project-level dependencies:
-    1. `$ make install`
+    1. macOS: `$ make install`（使用 Homebrew、`xcode-select` 與 pyenv；見 `Makefile:26-53`）
+    2. Linux／CI: `$ python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt`
 
 ### Run tests
 
 1. In one Terminal session:
     1. `$ cd pottery/`
-    2. `$ redis-server`
+    2. `$ redis-server`（或 `$ docker run --rm -p 6379:6379 redis:7-alpine`）
 2. In a second Terminal session:
     1. `$ cd pottery/`
-    2. `$ make test`
-    3. `$ make test-readme`
+    2. `$ source venv/bin/activate`（若使用虛擬環境）
+    3. `$ pytest --verbose --cov-config=.coveragerc --cov=pottery --cov=tests`
+    4. `$ pytest tests/test_doctests.py::test_readme`（只跑本 README 的 doctest）
 
-`make test` runs all of the unit tests as well as the coverage test.  However,
-sometimes, when debugging, it can be useful to run an individual test module,
-class, or method:
+`make test` runs all of the unit tests as well as the coverage test, followed by
+mypy, flake8, isort, and bandit (see `Makefile:72-83`).  It assumes a `venv/`
+directory already exists; the `make install` path that creates it is
+macOS-specific (see `Makefile:26-53`).  On Linux, use the CI-equivalent commands
+in [`docs/architecture/overview.md`](docs/architecture/overview.md#5-建置測試與靜態檢查).
+
+`pytest tests/test_doctests.py::test_readme` doctests the Python code examples
+in this README to ensure that they&rsquo;re correct.
+
+When debugging, it can be useful to run an individual test module, class, or
+method:
 
 1. In one Terminal session:
     1. `$ cd pottery/`
     2. `$ redis-server`
 2. In a second Terminal session:
-    1. Run a test module with `$ make test tests=tests.test_dict`
-    2. Run a test class with: `$ make test tests=tests.test_dict.DictTests`
-    3. Run a test method with: `$ make test tests=tests.test_dict.DictTests.test_keyexistserror`
-
-`make test-readme` doctests the Python code examples in this README to ensure
-that they&rsquo;re correct.
+    1. Run a test module with `$ pytest tests/test_dict.py`
+    2. Run a test class with `$ pytest tests/test_dict.py::DictTests`
+    3. Run a test method with `$ pytest tests/test_dict.py::DictTests::test_keyexistserror`
