@@ -21,6 +21,7 @@ import concurrent.futures
 import contextlib
 import time
 import unittest.mock
+from typing import Generator
 
 import pytest
 from redis import Redis
@@ -36,6 +37,35 @@ from pottery import ReleaseUnlockedLock
 from pottery import TooManyExtensions
 from pottery import synchronize
 from pottery.base import logger
+
+
+@contextlib.contextmanager
+def _redises(redis_url: str, count: int) -> Generator[list[Redis], None, None]:
+    '''Create `count` isolated Redis masters and flush them afterwards.'''
+    base_url = redis_url.rsplit('/', 1)[0]
+    masters = [
+        Redis.from_url(f'{base_url}/{db}', socket_timeout=1)
+        for db in range(count)
+    ]
+    try:
+        for master in masters:
+            master.flushdb()
+        yield masters
+    finally:
+        for master in masters:
+            master.flushdb()
+        for master in masters:
+            master.close()
+
+
+def _wait_for_all_masters(masters: list[Redis], key: str) -> None:
+    '''Wait for Redlock's background acquisition futures to finish.'''
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        if all(master.exists(key) for master in masters):
+            return
+        time.sleep(.01)
+    raise AssertionError(f'not all masters acquired {key}')
 
 
 class TestRedlock:
@@ -299,6 +329,153 @@ class TestRedlock:
             redlock.release(raise_on_redis_errors=True)
 
     @staticmethod
+    def test_acquire_succeeds_with_exact_quorum(redis_url: str) -> None:
+        with _redises(redis_url, 3) as masters:
+            lock = Redlock(key='printer', masters=masters, auto_release_time=1)
+            with unittest.mock.patch.object(masters[0], 'set', return_value=False):
+                assert lock.acquire(blocking=False)
+            assert sum(master.exists(lock.key) for master in masters) >= 2
+            assert lock.locked() > 0
+            lock.release()
+
+    @staticmethod
+    def test_acquire_below_quorum_releases_partial_acquisition(redis_url: str) -> None:
+        with _redises(redis_url, 3) as masters:
+            lock = Redlock(key='printer', masters=masters, auto_release_time=1)
+            with unittest.mock.patch.object(masters[0], 'set', return_value=False), \
+                 unittest.mock.patch.object(masters[1], 'set', return_value=False):
+                assert not lock.acquire(blocking=False)
+            assert not any(master.exists(lock.key) for master in masters)
+
+    @staticmethod
+    def test_acquire_quorumisimpossible_with_majority_errors(redis_url: str) -> None:
+        with _redises(redis_url, 3) as masters:
+            lock = Redlock(key='printer', masters=masters, auto_release_time=1)
+            with unittest.mock.patch.object(masters[0], 'set', side_effect=TimeoutError), \
+                 unittest.mock.patch.object(masters[1], 'set', side_effect=TimeoutError), \
+                 pytest.raises(QuorumIsImpossible):
+                lock.acquire(blocking=False, raise_on_redis_errors=True)
+
+    @staticmethod
+    @pytest.mark.skip(reason='Existing defect F1 (docs/research/9-s5-a1-a4-inventory.md §2.5.1): with an even number of masters, one error already makes quorum impossible, but Redlock only raises QuorumIsImpossible above n//2 errors. Fix in a separate agent-fix-bug item.')
+    def test_acquire_even_masters_raises_quorumisimpossible(redis_url: str) -> None:
+        with _redises(redis_url, 2) as masters:
+            lock = Redlock(key='printer', masters=masters, auto_release_time=1)
+            with unittest.mock.patch.object(masters[0], 'set', side_effect=TimeoutError), \
+                 pytest.raises(QuorumIsImpossible):
+                lock.acquire(blocking=False, raise_on_redis_errors=True)
+
+    @staticmethod
+    def test_locked_returns_conservative_ttl_with_master_skew(redis_url: str) -> None:
+        with _redises(redis_url, 3) as masters:
+            lock = Redlock(key='printer', masters=masters, auto_release_time=10)
+            assert lock.acquire(blocking=False)
+            _wait_for_all_masters(masters, lock.key)
+            for master, ttl in zip(masters, (3000, 3000, 7000)):
+                assert master.pexpire(lock.key, ttl)
+            remaining = lock.locked()
+            assert 2.5 < remaining <= 3.0
+            lock.release()
+
+    @staticmethod
+    def test_locked_uses_quorum_despite_minority_redis_error(redis_url: str) -> None:
+        with _redises(redis_url, 3) as masters:
+            lock = Redlock(key='printer', masters=masters, auto_release_time=10)
+            assert lock.acquire(blocking=False)
+            _wait_for_all_masters(masters, lock.key)
+            for master in masters:
+                assert master.pexpire(lock.key, 5000)
+            with unittest.mock.patch.object(masters[0], 'evalsha', side_effect=TimeoutError):
+                remaining = lock.locked()
+            assert 4.7 < remaining <= 5.0
+            lock.release()
+
+    @staticmethod
+    def test_release_succeeds_with_quorum_despite_minority_redis_error(redis_url: str) -> None:
+        with _redises(redis_url, 3) as masters:
+            lock = Redlock(key='printer', masters=masters, auto_release_time=10)
+            assert lock.acquire(blocking=False)
+            _wait_for_all_masters(masters, lock.key)
+            with unittest.mock.patch.object(masters[0], 'evalsha', side_effect=TimeoutError):
+                lock.release()
+            assert masters[0].exists(lock.key)
+            assert not masters[1].exists(lock.key)
+            assert not masters[2].exists(lock.key)
+
+    @staticmethod
+    def test_release_only_deletes_own_lock(redis: Redis) -> None:
+        lock1 = Redlock(key='printer', masters={redis}, auto_release_time=10)
+        lock2 = Redlock(key='printer', masters={redis}, auto_release_time=10)
+        assert lock1.acquire()
+        with pytest.raises(ReleaseUnlockedLock):
+            lock2.release()
+        assert redis.exists(lock1.key)
+        lock1.release()
+
+    @staticmethod
+    def test_expired_holder_cannot_release_new_holders_lock(redis: Redis) -> None:
+        lock1 = Redlock(key='printer', masters={redis}, auto_release_time=.05)
+        lock2 = Redlock(key='printer', masters={redis}, auto_release_time=1)
+        assert lock1.acquire()
+        time.sleep(.1)
+        assert lock2.acquire(blocking=False)
+        with pytest.raises(ReleaseUnlockedLock):
+            lock1.release()
+        assert redis.get(lock1.key) == lock2._uuid.encode()
+        assert lock2.locked() > 0
+        lock2.release()
+
+    @staticmethod
+    def test_non_blocking_acquire_attempts_each_master_once(redis: Redis) -> None:
+        holder = Redlock(key='printer', masters={redis}, auto_release_time=10)
+        contender = Redlock(key='printer', masters={redis}, auto_release_time=10)
+        assert holder.acquire()
+        with unittest.mock.patch.object(redis, 'set', wraps=redis.set) as set:
+            assert not contender.acquire(blocking=False)
+        assert set.call_count == 1
+        holder.release()
+
+    @staticmethod
+    def test_blocking_acquire_gives_up_after_timeout(redis: Redis) -> None:
+        holder = Redlock(key='printer', masters={redis}, auto_release_time=10)
+        contender = Redlock(key='printer', masters={redis}, auto_release_time=10)
+        assert holder.acquire()
+        start = time.monotonic()
+        assert not contender.acquire(timeout=.2)
+        elapsed = time.monotonic() - start
+        assert .19 <= elapsed < 1
+        holder.release()
+
+    @staticmethod
+    def test_extend_resets_lease_to_auto_release_time(redis: Redis) -> None:
+        lock = Redlock(key='printer', masters={redis}, auto_release_time=1)
+        assert lock.acquire()
+        redis.pexpire(lock.key, 100)
+        assert 0 < redis.pttl(lock.key) <= 100
+        lock.extend()
+        ttl = redis.pttl(lock.key)
+        assert 900 < ttl <= 1000
+        lock.release()
+
+    @staticmethod
+    def test_custom_num_extensions(redis: Redis) -> None:
+        lock = Redlock(key='printer', masters={redis}, auto_release_time=1, num_extensions=1)
+        assert lock.acquire()
+        lock.extend()
+        with pytest.raises(TooManyExtensions):
+            lock.extend()
+        lock.release()
+
+    @staticmethod
+    def test_context_manager_releases_lock_when_body_raises(redis: Redis) -> None:
+        lock = Redlock(key='printer', masters={redis}, auto_release_time=1)
+        with pytest.raises(RuntimeError, match='boom'):
+            with lock:
+                assert redis.exists(lock.key)
+                raise RuntimeError('boom')
+        assert not redis.exists(lock.key)
+
+    @staticmethod
     @pytest.mark.parametrize('num_locks', range(1, 11))
     def test_contention(num_locks: int) -> None:
         dbs = range(1, 6)
@@ -341,6 +518,17 @@ class TestSynchronize:
         for result1, result2 in zip(results, results[1:]):
             delta = result2 - result1
             assert delta > .1
+
+    @staticmethod
+    def test_synchronize_preserves_function_metadata(redis: Redis) -> None:
+        @synchronize(key='synchronized-func', masters={redis}, auto_release_time=.2)
+        def func(value: int) -> int:
+            'Return the value doubled.'
+            return value * 2
+
+        assert func.__name__ == 'func'
+        assert func.__doc__ == 'Return the value doubled.'
+        assert func(21) == 42
 
     @staticmethod
     def test_synchronize_fails(redis: Redis) -> None:
