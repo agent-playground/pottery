@@ -326,6 +326,167 @@ class TestRedlock:
                 for lock in locks:  # pragma: no cover
                     lock.release()
 
+    @staticmethod
+    def test_acquire_masters_with_quorum() -> None:
+        # Business rule R1 (docs/business-rules.md §1): acquiring succeeds once
+        # a majority (len(masters) // 2 + 1) of the masters is locked.
+        dbs = (11, 12, 13)
+        urls = [f'redis://localhost:6379/{db}' for db in dbs]
+        masters = [Redis.from_url(url, socket_timeout=1) for url in urls]
+        for master in masters:
+            master.delete('redlock:printer')
+        rival = Redlock(key='printer', masters={masters[0]}, auto_release_time=1)
+        redlock = Redlock(key='printer', masters=masters, auto_release_time=1)
+
+        try:
+            assert rival.acquire(blocking=False)
+            rival_token = masters[0].get('redlock:printer')
+            assert rival_token
+            # rival holds masters[0], so redlock can lock only 2 of the 3
+            # masters -- which is a majority, so it must acquire the lock.
+            assert redlock.acquire(blocking=False)
+            assert redlock.locked()
+            assert masters[1].get('redlock:printer') == masters[2].get('redlock:printer')
+            assert masters[1].get('redlock:printer') != rival_token
+            assert masters[0].get('redlock:printer') == rival_token
+
+        finally:
+            # Clean up for the next unit test run.
+            with contextlib.suppress(ReleaseUnlockedLock):
+                redlock.release()
+            with contextlib.suppress(ReleaseUnlockedLock):
+                rival.release()
+
+    @staticmethod
+    def test_acquire_masters_below_quorum_releases_them() -> None:
+        # Business rule R1 (docs/business-rules.md §1): when fewer masters than
+        # the majority (len(masters) // 2 + 1) can be locked, acquire() returns
+        # False, and the masters it did lock are released again.
+        dbs = (11, 12, 13)
+        urls = [f'redis://localhost:6379/{db}' for db in dbs]
+        masters = [Redis.from_url(url, socket_timeout=1) for url in urls]
+        for master in masters:
+            master.delete('redlock:printer')
+        rival = Redlock(
+            key='printer',
+            masters={masters[1], masters[2]},
+            auto_release_time=1,
+        )
+        redlock = Redlock(key='printer', masters=masters, auto_release_time=1)
+
+        try:
+            assert rival.acquire(blocking=False)
+            rival_token = masters[1].get('redlock:printer')
+            assert rival_token
+            # Only masters[0] is free: locking 1 of 3 masters is below the
+            # majority of 2, so redlock must not acquire the lock.
+            assert not redlock.acquire(blocking=False)
+            assert not redlock.locked()
+            assert not masters[0].exists('redlock:printer')
+            # The masters rival holds must survive redlock's cleanup, since
+            # redlock doesn't hold rival's token (business rule R3).
+            for master in (masters[1], masters[2]):
+                assert master.get('redlock:printer') == rival_token
+
+        finally:
+            # Clean up for the next unit test run.
+            with contextlib.suppress(ReleaseUnlockedLock):
+                redlock.release()
+            rival.release()
+
+    @staticmethod
+    def test_non_holder_cannot_release_or_extend(redis: Redis) -> None:
+        # Business rule R3 (docs/business-rules.md §1): only the holder can
+        # release or extend a lock; another client must not change the holder's
+        # lock even when it names the same key.
+        holder = Redlock(key='printer', masters={redis}, auto_release_time=1)
+        assert holder.acquire(blocking=False)
+        token = redis.get('redlock:printer')
+        assert token
+        stranger = Redlock(key='printer', masters={redis}, auto_release_time=1)
+
+        with pytest.raises(ReleaseUnlockedLock):
+            stranger.release()
+        assert redis.get('redlock:printer') == token
+        with pytest.raises(ExtendUnlockedLock):
+            stranger.extend()
+        assert redis.get('redlock:printer') == token
+        assert holder.locked()
+
+        holder.release()
+        assert not redis.exists('redlock:printer')
+
+    @staticmethod
+    def test_stale_holder_cannot_release_new_holders_lock(redis: Redis) -> None:
+        # Business rule R2 (docs/business-rules.md §1): the lease is absolute,
+        # so once auto_release_time has passed another client gets the lock,
+        # even though the first holder never released it.
+        stale = Redlock(key='printer', masters={redis}, auto_release_time=.2)
+        assert stale.acquire(blocking=False)
+        stale_token = redis.get('redlock:printer')
+        assert stale_token
+        time.sleep(.4)
+        assert not redis.exists('redlock:printer')
+        holder = Redlock(key='printer', masters={redis}, auto_release_time=1)
+        assert holder.acquire(blocking=False)
+        token = redis.get('redlock:printer')
+        assert token != stale_token
+
+        # Business rule R3: the stale holder's token must not delete the new
+        # holder's lock.
+        with pytest.raises(ReleaseUnlockedLock):
+            stale.release()
+        assert redis.get('redlock:printer') == token
+        assert holder.locked()
+
+        holder.release()
+        assert not redis.exists('redlock:printer')
+
+    @staticmethod
+    def test_acquire_blocking_with_timeout_gives_up(redis: Redis) -> None:
+        # Business rule R4 (docs/business-rules.md §1): a blocking acquire()
+        # retries with a bounded delay, and gives up (returns False) at its
+        # timeout instead of looping forever.
+        holder = Redlock(key='printer', masters={redis}, auto_release_time=1)
+        assert holder.acquire(blocking=False)
+        challenger = Redlock(key='printer', masters={redis}, auto_release_time=1)
+
+        timer = ContextTimer()
+        timer.start()
+        assert not challenger.acquire(timeout=.3)
+        timer.stop()
+        assert timer.elapsed() < 3000
+        assert holder.locked()
+
+        holder.release()
+        assert not redis.exists('redlock:printer')
+
+    @staticmethod
+    def test_context_manager_timeout_gives_up(redis: Redis) -> None:
+        # Business rule R4 (docs/business-rules.md §1): used as a context
+        # manager, a Redlock waits for at most context_manager_timeout, then
+        # raises QuorumNotAchieved instead of waiting forever.
+        holder = Redlock(key='printer', masters={redis}, auto_release_time=1)
+        assert holder.acquire(blocking=False)
+        challenger = Redlock(
+            key='printer',
+            masters={redis},
+            auto_release_time=1,
+            context_manager_timeout=.3,
+        )
+
+        timer = ContextTimer()
+        timer.start()
+        with pytest.raises(QuorumNotAchieved):
+            with challenger:
+                ...  # pragma: no cover
+        timer.stop()
+        assert timer.elapsed() < 3000
+        assert holder.locked()
+
+        holder.release()
+        assert not redis.exists('redlock:printer')
+
 
 class TestSynchronize:
     @staticmethod
