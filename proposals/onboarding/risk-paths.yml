@@ -1,0 +1,84 @@
+# pottery risk hard rules（Issue #4 / S2 agent-onboard 提案草稿；依實際目錄結構）
+#
+# 觸及下列任一 pattern → risk = 2，無裁量空間（docs/06 §3.2、§5.2）。
+# H1–H4 源自 Gartner G00843405；H5–H7 為本專案擴充（guardrail 自我保護與
+# 不可逆操作）。此檔搬到 .github/factory/ 後受 CODEOWNERS 與 H5 保護——
+# agent 不得修改約束自己的規則（docs/05 §1.1）。
+#
+# 盤點依據（software-factory HEAD 2d7c70a，`git ls-files` + `wc -l` + grep）：
+#   - 58 個 tracked files；pottery/ 19 個 .py 檔（18 個實作模組 + __init__.py）
+#     共 4,790 行；tests/ 17 個 test_*.py、72 個 test method。
+#   - .github/workflows/python-package.yml（pytest/mypy/flake8/isort/bandit，
+#     只在 push/PR 到 master 時觸發）。
+#   - 無 migrations/、schema 定義、OpenAPI/Swagger、*.proto。
+#   - pottery/ 與 tests/ 無 authn/authz、金流、加密、PII 的 import 或實作。
+#
+# 設計原則（docs/16 §5.3）：只列本 repo 真的存在、且改動確實影響介面或共用
+# 行為的路徑；不用 `**/*token*` 這類會誤中無關檔案的廣樣式。每條 glob 後
+# 註明實際命中的檔案。
+
+hard_rules:
+  # H1 — 授權/認證邏輯（authn/authz、權限判斷、session 管理）
+  # 掃描未發現，待人類確認：
+  #   `grep -rniE 'auth|password|secret|credential|jwt|oauth' pottery/` 只命中
+  #   各檔頭版權宣告的 "author"；沒有權限判斷或 session 程式碼。
+  #   保留規則 id 與空陣列，避免未來新增 auth 模組時漏保護。
+  H1: []
+
+  # H2 — 財務計算（金額、計費、對帳、稅務）
+  # 掃描未發現，待人類確認：無 payment/billing/ledger/invoice/tax 相關檔案
+  # 或識別字；這是通用資料結構工具庫，不處理金額。
+  H2: []
+
+  # H3 — 敏感資料處理（PII、憑證、加密、個資）
+  # 掃描未發現，待人類確認：pottery/ 沒有 PII、憑證或加解密實作。
+  # requirements.txt 的 cryptography / PyJWT 是 dev/release 工具鏈的
+  # transitive deps，pottery/ 與 tests/ 均未 import。
+  # 刻意不列 `**/*token*` 或 `**/*secret*`：前者會誤中 Redlock 的鎖 token
+  # 概念（pottery/redlock.py 的隨機鎖值，不是憑證），後者在本 repo 無命中；
+  # 廣樣式只會製造誤報（docs/16 §5.3 的 tokens.css 教訓）。
+  # 注意：pottery/base.py 會讀 REDIS_URL（可能含連線密碼）並傳給 redis-py，
+  # 但未記錄或輸出；若人類認為這屬於 H3，可將 base.py 列入本規則。
+  H3: []
+
+  # H4 — systems of record 或共用模組的介面變更
+  # 本 repo 沒有 systems of record；以下是所有容器與 primitive 共用的模組：
+  H4:
+    # 337 行，定義 _Common/_Encodable/_Pipelined/_Comparable/Container/
+    # Primitive/AIOPrimitive；所有 Redis 容器、Redlock、NextID 都依賴它。
+    - "pottery/base.py"          # 實際檔案：337 行；所有容器/primitive 的共用抽象
+    # 60 行，定義 PotteryEncoder（全套件共用的 JSON 編碼器）；改動會影響
+    # 所有容器的序列化格式。
+    - "pottery/monkey.py"        # 實際檔案：60 行；全域 JSON encoder 與 json.dumps patch
+    # 33 行，定義 JSONTypes 等共用型別；改動會影響全部模組的型別契約。
+    - "pottery/annotations.py"   # 實際檔案：33 行；JSONTypes/RedisValues 共用型別
+
+  # H5 — guardrail 自身（agent 不得修改；無條件寫入，與 repo 結構無關）
+  H5:
+    # 搬檔後也會涵蓋 .github/factory/risk-paths.yml 本身。
+    - ".github/**"          # 實際命中：.github/workflows/python-package.yml、
+                            #   .github/ISSUE_TEMPLATE/bug_report.md、
+                            #   .github/ISSUE_TEMPLATE/feature_request.md、
+                            #   .github/copilot-instructions.md
+    - "CODEOWNERS"          # 目前不存在（git ls-files 無此檔）；保留給人類補上所有權保護
+    - "catalog-info.yaml"   # 目前不存在；人類搬檔後才會出現在 repo 根目錄
+    - ".dsh/skills/**"      # 目前不存在（無 .dsh/ 目錄）；未來若引入工廠技能時受保護
+
+  # H6 — 資料庫 schema 遷移（不可逆或破壞性）
+  # 掃描未發現，待人類確認：無 migrations/、Flyway/Alembic、schema.sql；
+  # Redis 沒有宣告式 schema。各容器自行決定 key 的編碼格式，但把
+  # pottery/*.py 全列進來會讓每次功能變更都觸發 H6，違反「硬規則不誤報」
+  # 的原則，故留空。若未來新增明確的資料格式版本/遷移檔，再補精確 glob。
+  H6: []
+
+  # H7 — 對外 API 的破壞性變更
+  # 本 repo 是 Python 套件，沒有 OpenAPI/proto；對外 API 就是 __all__ 的
+  # 28 個公開名稱與例外階層。
+  H7:
+    # 實際檔案：pottery/__init__.py。任何 export 變更都會命中，包含非破壞性
+    # 的新增；這是刻意的保守取捨——此檔變更頻率低，誤報成本小於漏掉公開
+    # API 破壞。若人類認為太嚴，可改為只保護 __all__ 的 CI 檢查。
+    - "pottery/__init__.py"
+    # 實際檔案：pottery/exceptions.py。公開例外類別（PotteryError、
+    # QuorumNotAchieved 等）是下游 except 子句的契約，改動屬破壞性變更。
+    - "pottery/exceptions.py"

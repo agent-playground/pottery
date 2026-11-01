@@ -1,0 +1,87 @@
+# Pottery 納管提案（Issue #4 / S2 agent-onboard）— 三軸值刻意留 TODO，待人類裁定。
+#
+# 本檔位於 proposals/onboarding/，不是 factory-score 的讀取路徑；誤合併也不會
+# 改變任何評級。人類審核後依 README 的搬檔指令移到 repo 根目錄才會生效
+# （docs/27 §2、§7）。
+#
+# 掃描基準：agent-playground/pottery @ software-factory（HEAD 2d7c70a）。
+#   58 個 tracked files；pottery/ 19 個 .py 檔（18 個實作模組 + __init__.py，
+#   共 4,790 行）；tests/ 17 個 test_*.py、72 個 test method。
+#   無 migrations/、schema、OpenAPI/proto、Docker/K8s/Helm 部署檔。
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: pottery
+  description: Pottery — Pythonic Redis 客戶端與資料結構／分散式鎖工具庫（單一 Python 套件，無服務部署）
+  annotations:
+    github.com/project-slug: agent-playground/pottery
+    backstage.io/techdocs-ref: dir:.
+
+    # --- Factory oversight axes（docs/06 §3，合法值以 src/scoring/types.ts 為準）---
+    # 三軸一律 TODO：值缺席或非法會 fail-safe 計為 2（docs/27 §7.2）。
+    # 以下「建議值」只是提案，請人類裁定後再把 TODO 換成合法值。
+    factory.io/business-criticality: TODO  # 合法值：tactical | operational | strategic
+    # 建議值：tactical (0)
+    # 理由：這是一個通用 Redis 工具庫，不是對外服務或內部業務系統。repo 內沒有
+    #       服務進入點、部署設定或客戶資料；故障不會直接影響外部使用者或營收。
+    #       依 docs/06 §3.1，tactical 的判準「內部工具、開發輔助、實驗性專案；
+    #       故障不影響外部使用者」最接近。
+    # 證據：setup.py 只是 PyPI 打包 manifest（__version__ = '3.0.1'，
+    #       install_requires = redis>=4.2.0rc1、mmh3、typing_extensions）；
+    #       git ls-files 掃描無 Dockerfile、docker-compose、K8s/Helm、deploy/、
+    #       .github/workflows/python-package.yml 只有 test/type-check/lint/bandit，
+    #       沒有 deploy 或 publish job；README.md 的用途是程式庫使用範例。
+    # 為何不是 operational (1)：repo 本身沒有「內部業務系統」在運作，沒有同仁
+    #       日常作業依賴這個 fork 的服務；它是一個可被 import 的套件。
+    # 為何不是 strategic (2)：沒有面向客戶的介面、沒有金流/營收掛鉤、以
+    #       Apache-2.0 開源釋出，不構成專有核心智慧財產。
+    # 保留意見：若此 fork 日後承接上游 PyPI 發佈，或成為下游生產服務的關鍵
+    #       依賴，應由人類上調為 operational 或 strategic。
+
+    factory.io/risk-profile: TODO  # 合法值：low | medium | high
+    # 建議值：low (0)
+    # 理由：實際掃描未發現 H1（授權/認證）、H2（金流）、H3（PII/憑證/加密）、
+    #       H6（schema 遷移）、H7（對外 API 定義）的對應程式碼。一般功能變更
+    #       落在有測試覆蓋的 leaf module；核心共用檔另由 risk-paths 的 H4/H7
+    #       動態升級，不需要把整個 repo 的 baseline 拉高。
+    # 證據：`grep -rniE 'auth|password|secret|credential|encrypt|decrypt|payment|
+    #       billing|pii|jwt|oauth' pottery/` 只命中 19 個檔頭版權宣告的
+    #       "author"；`git ls-files | grep -iE 'migrat|schema|openapi|swagger|
+    #       \.proto$|auth|payment|billing|crypto|secret|credential|pii'` 無結果。
+    #       requirements.txt 雖有 cryptography==50.0.2 與 PyJWT==2.15.1，但
+    #       pottery/ 與 tests/ 都沒有 import（已 grep），它們是 dev/release
+    #       工具鏈（twine/keyring 等）的 transitive deps。
+    # 為何不是 medium (1)：不像 factory-scoreboard 那樣持有 ingest 認證或
+    #       SCOREBOARD_TOKEN；這裡沒有需要人工守護的敏感邏輯。
+    # 為何不是 high (2)：H1–H3、H6–H7 掃描皆無對應結構；H4 只在
+    #       pottery/base.py 等共用抽象被改動時動態觸發，不是靜態 baseline。
+    # 保留意見：pottery/base.py 會讀 REDIS_URL（可能含連線密碼），但只傳給
+    #       redis-py，未記錄或輸出；若人類認為這屬於 H3，可將 base.py 列入
+    #       H3，但會與 H4 重疊並提高誤報率。
+
+    factory.io/complexity: TODO  # 合法值：low | medium | high
+    # 建議值：medium (1)
+    # 理由：單一 Python 套件、沒有跨服務拓撲，但也不是單檔模組——18 個實作
+    #       模組共用 pottery/base.py 的抽象，且同步/非同步雙實作讓核心邏輯
+    #       有兩份。典型變更會同時觸及 base.py、目標模組與 tests/，符合
+    #       docs/06 §3.3「跨數個模組」的 medium 判準。
+    # 證據：pottery/ 共 4,790 行（wc -l）；pottery/base.py 337 行定義
+    #       _Common/_Encodable/_Pipelined/_Comparable/Container/Primitive/
+    #       AIOPrimitive，所有容器與 Redlock/NextID 都繼承它；redlock.py 773 行
+    #       與 aioredlock.py 563 行合計 1,336 行（約 28%），含 quorum、
+    #       auto-release、extension 與 clock-drift 補償邏輯；__init__.py 的
+    #       __all__ 有 28 個公開名稱。
+    # 為何不是 low (0)：不是單一檔案/單一模組；改一個容器通常要同步改
+    #       base.py 的共用行為與對應測試，redlock 的 quorum 邏輯也不適合用
+    #       「單檔小改」看待。
+    # 為何不是 high (2)：沒有跨服務/跨系統協調、沒有新架構模式、沒有
+    #       migrations；外部依賴只有一個 Redis 端點，服務數量為 0（本 repo
+    #       不執行服務）。
+
+    factory.io/agent-automerge: "false"  # 新納管 repo 不預設開放自動合併
+    factory.io/stack: python
+    factory.io/test-framework: pytest
+spec:
+  type: library
+  lifecycle: experimental
+  owner: group:default/factory-team  # TODO：人類確認 pottery 的實際 owner group
