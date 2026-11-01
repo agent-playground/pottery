@@ -34,6 +34,7 @@ been battle tested in production at scale.
 - [Bloom filters 🌸](#bloom-filters)
 - [HyperLogLogs 🪵](#hyperloglogs)
 - [ContextTimer ⏱️](#contexttimer)
+- 架構總覽（開發者文件，繁體中文）：[docs/architecture-overview.md](./docs/architecture-overview.md)
 
 
 
@@ -42,6 +43,8 @@ been battle tested in production at scale.
 ```shell
 $ pip3 install pottery
 ```
+
+> 想認識本套件的內部結構（模組分層、Redis key 命名空間、樂觀併發與 quorum 機制、公開 API 面），請閱讀 [docs/architecture-overview.md](./docs/architecture-overview.md)（繁體中文）。
 
 ## Usage
 
@@ -1028,6 +1031,34 @@ True
     2. `$ cd pottery/`
 2. Install project-level dependencies:
     1. `$ make install`
+
+### 開發環境（Linux／CI 同款指令）
+
+`Makefile` 的 `make install`（上面最後一步）依賴 macOS 的 Homebrew 與 pyenv（`Makefile:37-54`），**在 Linux 上無法執行**。Linux／CI 等價的建環境方式——與 `.github/workflows/python-package.yml` 的步驟一致，於 repo 根目錄執行：
+
+```shell
+$ python3 -m venv venv
+$ venv/bin/pip install --upgrade pip setuptools wheel
+$ venv/bin/pip install --requirement requirements.txt
+```
+
+測試需要一個本機 Redis（CI 以 `redis` image 作為 service，port 6379；也可直接安裝 `redis-server`）。用 Docker 啟動：
+
+```shell
+$ docker run -d -p 6379:6379 --name pottery-redis redis:7-alpine
+```
+
+接著執行 CI 用的指令（CI 矩陣為 Python 3.11–3.15）：
+
+```shell
+$ venv/bin/python -m pytest --verbose --cov-config=.coveragerc --cov=pottery --cov=tests
+$ venv/bin/mypy
+$ venv/bin/flake8 *.py pottery/*.py tests/*.py --count --max-complexity=10 --statistics
+$ venv/bin/isort *.py pottery/*.py tests/*.py --check-only --diff
+$ venv/bin/bandit --recursive pottery
+```
+
+注意：本 README 的 Python 程式碼區塊是**可執行的契約**——`tests/test_doctests.py` 的 readme doctest 會連到本機 Redis（db 1）逐一執行其中的 doctest 範例；修改 README 後必須至少重跑 `venv/bin/python -m pytest tests/test_doctests.py` 確認綠燈。
 
 ### Run tests
 
