@@ -1,0 +1,32 @@
+# verify-lean.sh metric baseline (key=value; integer counts)
+# generated: 2026-11-03T04:54:26+0000
+# project: /home/runner/work/software_factory/software_factory/target/specs/lean
+# main: Specs/Proofs.lean
+whole_project.lean_files=7
+whole_project.total_lines=1803
+whole_project.lean_code_lines=1477
+main.total_lines=130
+main.lean_code_lines=90
+main.proof_api.public=5
+main.proof_api.private=0
+main.proof_branching.cases=2
+main.proof_branching.by_cases=0
+main.proof_branching.induction=0
+main.proof_branching.total=2
+main.proof_plumbing.have=12
+main.proof_plumbing.show=0
+main.proof_plumbing.suffices=0
+main.proof_plumbing.rw=9
+main.proof_plumbing.total=21
+main.automation.simp=2
+main.automation.simpa=3
+main.automation.omega=0
+main.automation.linarith=0
+main.automation.grind=0
+main.automation.total=5
+main.representation.List_span=0
+main.representation.takeWhile=0
+main.representation.dropWhile=0
+main.representation.getLast?=0
+main.representation.dropLast=0
+main.representation.total=0
