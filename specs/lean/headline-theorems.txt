@@ -1,0 +1,5 @@
+Redlock.at_most_one_valid_holder
+Redlock.as_is_late_extend_reports_success
+Redlock.as_is_late_extend_no_compensation
+Redlock.contract_extend_success_implies_validity
+Redlock.contract_late_extend_compensates
