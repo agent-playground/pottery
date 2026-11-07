@@ -1,0 +1,124 @@
+# Backstage catalog entry — ONBOARDING PROPOSAL for agent-playground/pottery.
+#
+# ⚠️ 本檔位於 proposals/onboarding/，不是任何機制的讀取路徑；人類審核、裁定三軸
+#    並搬檔後才生效（docs/27 §2、§7.3）。本提案未修改正位的 catalog-info.yaml。
+#
+# 格式對齊機制 repo（aswf-dev/software_factory）的 catalog-info.yaml：
+# apiVersion / kind / metadata.annotations / spec。
+#
+# The three factory.io axis annotations are INPUTS to oversight scoring
+# (docs/06 §3). 三軸的值一律為 TODO——agent 只提供建議與證據，裁定權在人類
+# （docs/27 §7.1 ②）。合法值以 src/scoring/types.ts 為單一真相來源：
+#   BUSINESS_CRITICALITY = ['tactical', 'operational', 'strategic']  → 0/1/2
+#   RISK_PROFILE         = ['low', 'medium', 'high']                 → 0/1/2
+#   COMPLEXITY           = ['low', 'medium', 'high']                 → 0/1/2
+# ⚠️ 值缺席或非法一律 fail-safe 計為 2（最高風險）且無任何錯誤訊息
+#    （docs/27 §7.2；camunda_hazelcast 幽靈值 `supporting` 實案）。搬檔前必須把
+#    三個 TODO 換成上表中的合法值。
+#
+# 掃描基準：agent-playground/pottery @ 1cf5eaa（software-factory），2026-11-07。
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: pottery
+  description: Pottery — Redis for Humans（Pythonic Redis 存取函式庫：分散式鎖 Redlock、單調遞增 ID NextID 與 Redis 支撐的集合資料結構）
+  annotations:
+    github.com/project-slug: agent-playground/pottery
+    backstage.io/techdocs-ref: dir:.
+
+    # --- Factory oversight axes (docs/06 §3) ---
+
+    # business-criticality
+    # 建議值：tactical (0)
+    # 理由（為什麼不是 operational）：這是開發者面向的 Python 函式庫，不是組織的
+    #   第一方業務服務。setup.py:34 是 PyPI 套件版本 3.0.1、setup.py:36 的上游 URL
+    #   指向 brainix/pottery；repo 內沒有發佈／部署步驟——唯一的 CI 工作
+    #   .github/workflows/python-package.yml 只有一個 build job（測試、mypy、
+    #   flake8/isort、bandit，:29-50），沒有 publish 或 deploy job，也沒有消費端
+    #   設定。它的故障影響的是 `pip install pottery` 的用客，而非本組織直接的
+    #   業務流程。README.md:8 的「battle tested in production at scale」是上游
+    #   brainix/pottery 的自我宣稱，不是本 fork 的部署事實，不能當成本組織的
+    #   生產依賴證據。
+    # 為什麼不是 strategic：repo 內沒有金流、計費、營收或客戶合約路徑（H2 掃描
+    #   零命中，見 risk-paths.yml）；它不直接產生或守護營收。
+    # 反轉條件：若人類知道本 fork 已被組織內生產服務依賴（例如以 Redlock 做跨服務
+    #   協調、以 NextID 發號），就應升級為 operational——此資訊不在 repo 內，
+    #   屬人類判斷。
+    factory.io/business-criticality: TODO  # 合法值：tactical | operational | strategic
+
+    # risk-profile
+    # 建議值：medium (1)
+    # 理由（為什麼不是 low）：核心是「靜默失敗」型的併發正確性程式碼，而不是
+    #   一般 CRUD：
+    #   - pottery/redlock.py:107-148 以 Redis Lua 腳本實作 acquire/extend/release
+    #     的持有者 token 比對（GET == ARGV[1] 後才 PTTL/PEXPIRE/DEL）；
+    #   - redlock.py:318-353 跨多個 Redis master 以多數決
+    #     （num_masters_acquired > len(self.masters) // 2）判定取得鎖，並以
+    #     auto_release_time - clock drift - 已耗時 檢查剩餘有效性；
+    #   - redlock.py:480-498 的 locked() 同樣以多數決與 min(ttls) 計算剩餘時間；
+    #   - pottery/aioredlock.py:242-272、490-516、520-540 是 async 版的重複實作
+    #     （acquire quorum、release quorum、context manager）；
+    #   - pottery/nextid.py:82-97 以 Lua CAS 保證 ID 單調遞增；aionextid.py:75-81
+    #     是 async 對應實作。
+    #   這些邏輯出錯不一定拋錯：後果可能是兩個 worker 同時持鎖，或同一 key 發出
+    #   重複 ID，直接破壞下游用客的資料一致性。repo 另有 19 個 test_*.py、CI 的
+    #   Redis service（python-package.yml:18-27）與 bandit（:48-50）作為防護網，
+    #   但防護網的存在不改變「核心路徑是併發正確性」這個事實。
+    # 理由（為什麼不是 high）：掃描未發現 high 級的四類路徑——無認證／授權
+    #   （authn/authz）、無金流計算、無 PII／憑證／加密金鑰處理；H1–H3 掃描
+    #   零命中（見 risk-paths.yml 的證據）。pottery/monkey.py:33-55 會 monkey
+    #   patch json.dumps（PotteryEncoder），是共用序列化層，但它處理的是容器
+    #   內容，不是憑證。沒有 DB schema 遷移（H6 空）。H4／H5／H7 是路徑級的
+    #   升級規則：一旦改到 redlock.py、__init__.py 等檔案，risk 會被強制為 2；
+    #   這不需要把整個 repo 的基準 profile 預先評為 high。
+    # 對照：與 factory-scoreboard 同為 medium（docs/16 §5.1）——scoreboard 的
+    #   風險來自應用層認證，pottery 的風險來自併發正確性，皆非 high 級四類路徑。
+    factory.io/risk-profile: TODO  # 合法值：low | medium | high
+
+    # complexity
+    # 建議值：medium (1)
+    # 理由（為什麼不是 low）：
+    #   - sync/async 成對雙實作：redlock.py ↔ aioredlock.py、nextid.py ↔
+    #     aionextid.py；改一邊必須同步另一邊，否則行為漂移；
+    #   - pottery/base.py:278-337 是共用基礎層（Container / Primitive /
+    #     AIOPrimitive），有 10 個模組在模組層 `from .base import ...`
+    #     （aionextid/aioredlock/bloom/cache/dict/hyper/list/nextid/redlock/set），
+    #     另 monkey.py:37 在函式內 import pottery.base；
+    #   - CI 跑 5 個 Python 版本的矩陣（python-package.yml:17，3.11–3.15），
+    #     且測試需要真實 Redis service（同檔 :18-27；tests/conftest.py:47 連
+    #     redis://localhost:6379），quorum/TTL 語意不易純本地驗證；
+    #   - 併發與 Lua 腳本（redlock.py:107-148、nextid.py:82-97）使閱讀與測試
+    #     成本高於一般資料結構函式庫。
+    # 理由（為什麼不是 high）：單一 artefact（一個 PyPI 套件），目錄結構扁平
+    #   （只有 pottery/ 與 tests/ 兩層；pottery/ 19 個 .py、4,790 行；tests/
+    #   19 個 test_*.py、4,489 行）；沒有跨服務拓撲——多 master quorum 是函式庫
+    #   內部的協調（pottery/executor.py:26-51 的 BailOutExecutor），不是分散在
+    #   多個 repo／服務的運算排布；沒有 API 定義檔、沒有 migrations、沒有 DB
+    #   schema（H6/H7 掃描見 risk-paths.yml）。
+    # 註：若人類認為雙實作＋5 版本矩陣已足以稱 high，請以 high 處理；若認為
+    #   單一函式庫可視同 low，基準分 0+1+0=1 會落入 on-loop tier。以本建議值
+    #   tactical/medium/medium 計，基準分 0+1+1=2 → review（docs/06 §3）。
+    factory.io/complexity: TODO  # 合法值：low | medium | high
+
+    # 新納管 repo 預設不開放自動合併（任務硬規則）。即使三軸被判為
+    # on-loop，也必須先有人類實績才談 automerge。
+    factory.io/agent-automerge: "false"
+
+    # --- 技術棧規範（供 CI 決定驗證組合；依實際掃描結果填寫，非風險裁定）---
+    # stack：Python 套件。沒有 pyproject.toml／poetry／uv；建置 = setuptools
+    #   setup.py（setup.py:34 版本、:71 python_requires>=3.10、:72 install_requires
+    #   為 redis>=4.2.0rc1、mmh3、typing_extensions），依賴 = pip
+    #   （requirements.txt 為 freeze 結果、requirements-to-freeze.txt 為源頭）。
+    factory.io/stack: python
+    # test-framework：pytest。pytest.ini 的 asyncio_mode=auto 即
+    #   pytest-asyncio；tests/ 有 19 個 test_*.py；CI 命令是
+    #   pytest --cov=pottery --cov=tests（python-package.yml:41），另有
+    #   mypy、flake8、isort、bandit（:42-50）。
+    factory.io/test-framework: pytest
+spec:
+  # 機制 repo 範本為 type: service；本元件是供他人 import 的套件，
+  # Backstage 內建合法值取 library（計分只讀 annotations，不讀 spec）。
+  type: library
+  lifecycle: experimental
+  # owner 沿用工廠團隊群組——人類搬檔時如另有歸屬請改正。
+  owner: group:default/factory-team
